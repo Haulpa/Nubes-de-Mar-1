@@ -199,7 +199,10 @@ class MainActivity : Activity() {
         val level = if (d.avg >= 70) "Muy probable" else if (d.avg >= 50) "Posible" else "Poco probable"
         c.addView(tv(level, 17f, col, true))
         val detail = "Mejor hora ${d.best.hr}:00" + if (d.best.reasons.isNotEmpty()) " · ${d.best.reasons.joinToString(", ")}" else ""
-        c.addView(tv(detail, 13f, MUTED).apply { layoutParams = lp(12) })
+        c.addView(tv(detail, 13f, MUTED).apply { layoutParams = lp(2) })
+        val agree = if (d.models < 2) "1 modelo" else "${d.models} modelos · " +
+            (if (d.spread <= 15) "coinciden" else if (d.spread <= 30) "diferencias moderadas" else "poca coincidencia")
+        c.addView(tv(agree, 12f, MUTED).apply { layoutParams = lp(12) })
         val hr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         d.hours.forEach { h ->
             hr.addView(TextView(this).apply {
