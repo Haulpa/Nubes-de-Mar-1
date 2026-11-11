@@ -6,6 +6,7 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.text.InputType
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -151,8 +152,41 @@ class MainActivity : Activity() {
         })
         searchResults = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         pc.addView(searchResults)
+        pc.addView(tv("Altitud del mirador (m)", 12f, MUTED).apply { layoutParams = lp(4) })
+        val viewInput = input("Altitud del mirador (m)").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(Logic.viewM(this@MainActivity).toString())
+        }
+        pc.addView(viewInput)
+        pc.addView(button("Guardar altitud", false).apply {
+            layoutParams = lp(0)
+            setOnClickListener {
+                val v = viewInput.text.toString().trim().toIntOrNull()?.coerceIn(0, 4000) ?: 1350
+                Logic.prefs(this@MainActivity).edit().putInt("viewm", v).putStringSet("notified", emptySet()).apply()
+                check()
+            }
+        })
         root.addView(pc)
         renderPlaces()
+
+        // AEMET (opcional)
+        val ac = card()
+        ac.addView(tv("AEMET (opcional)", 13f, MUTED))
+        ac.addView(tv("Clave gratuita en opendata.aemet.es. El código es el número tras «id» en la URL del municipio en aemet.es (p. ej. madrid-id28079 → 28079). Solo cubre hoy y mañana.", 12f, MUTED).apply { layoutParams = lp(10) })
+        val keyInput = input("Clave API de AEMET").apply { setText(Logic.prefs(this@MainActivity).getString("aemet_key", "")) }
+        val muniInput = input("Código de municipio (5 dígitos)").apply { setText(Logic.prefs(this@MainActivity).getString("aemet_muni", "")) }
+        ac.addView(keyInput)
+        ac.addView(muniInput)
+        ac.addView(button("Guardar AEMET", false).apply {
+            layoutParams = lp(0)
+            setOnClickListener {
+                Logic.prefs(this@MainActivity).edit()
+                    .putString("aemet_key", keyInput.text.toString().trim())
+                    .putString("aemet_muni", muniInput.text.toString().trim()).apply()
+                check()
+            }
+        })
+        root.addView(ac)
 
         // Frecuencia
         val fc = card()
@@ -223,6 +257,17 @@ class MainActivity : Activity() {
         check()
     }
 
+    private fun input(h: String) = EditText(this).apply {
+        hint = h
+        setHintTextColor(MUTED)
+        setTextColor(TEXT)
+        textSize = 14f
+        setSingleLine(true)
+        background = rounded(CHIP, 12)
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        layoutParams = lp(8)
+    }
+
     private fun placeRow(p: Place, sel: Boolean) = TextView(this).apply {
         text = if (p.detail.isEmpty()) p.name else "${p.name}\n${p.detail}"
         textSize = 14f
@@ -287,9 +332,13 @@ class MainActivity : Activity() {
         c.addView(tv(level, 17f, col, true))
         val detail = "Mejor hora ${d.best.hr}:00" + if (d.best.reasons.isNotEmpty()) " · ${d.best.reasons.joinToString(", ")}" else ""
         c.addView(tv(detail, 13f, MUTED).apply { layoutParams = lp(2) })
+        d.best.top?.let {
+            c.addView(tv("Techo estimado de la capa húmeda ~$it m · mirador ${Logic.viewM(this)} m", 12f, MUTED).apply { layoutParams = lp(2) })
+        }
         val agree = if (d.models < 2) "1 modelo" else "${d.models} modelos · " +
             (if (d.spread <= 15) "coinciden" else if (d.spread <= 30) "diferencias moderadas" else "poca coincidencia")
-        c.addView(tv(agree, 12f, MUTED).apply { layoutParams = lp(12) })
+        c.addView(tv(agree, 12f, MUTED).apply { layoutParams = lp(if (d.aemet != null) 2 else 12) })
+        d.aemet?.let { c.addView(tv(it, 12f, MUTED).apply { layoutParams = lp(12) }) }
         val hr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         d.hours.forEach { h ->
             hr.addView(TextView(this).apply {
@@ -322,7 +371,8 @@ class MainActivity : Activity() {
                     results.removeAllViews()
                     days.forEachIndexed { i, d -> results.addView(dayCard(d, dayLabel(i, d))) }
                     status.text = if (days.isEmpty()) "Sin datos"
-                    else "Última comprobación: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    else "Última comprobación: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")) +
+                        (if (Logic.aemetStatus.isEmpty()) "" else "\n" + Logic.aemetStatus)
                 }
             } catch (e: Exception) {
                 runOnUiThread { status.text = "Error de red. Reintenta." }
