@@ -19,7 +19,10 @@ object Logic {
     // Valle del Tiétar (Arenas de San Pedro), de cara al Puerto del Pico
     private const val API = "https://api.open-meteo.com/v1/forecast?latitude=40.21&longitude=-5.08" +
         "&hourly=temperature_2m,dew_point_2m,wind_speed_10m,cloud_cover_low,cloud_cover_mid,cloud_cover_high,temperature_850hPa" +
-        "&forecast_days=3&timezone=Europe%2FMadrid"
+        "&forecast_days=7&timezone=Europe%2FMadrid"
+
+    // Se muestran 7 días, pero solo se avisa de los primeros N (más allá la previsión es poco fiable)
+    const val NOTIFY_DAYS = 3
 
     fun score(hr: Int, low: Double, mid: Double, high: Double, t: Double, dew: Double, wind: Double, t850: Double): Hour {
         var s = 0
@@ -53,7 +56,7 @@ object Logic {
         val high = h.getJSONArray("cloud_cover_high")
         val t850 = h.getJSONArray("temperature_850hPa")
         val today = LocalDate.now(ZoneId.of("Europe/Madrid"))
-        val dates = listOf(today.toString(), today.plusDays(1).toString())
+        val dates = (0..6).map { today.plusDays(it.toLong()).toString() }
         return dates.mapNotNull { d ->
             val hours = mutableListOf<Hour>()
             for (i in 0 until time.length()) {
@@ -94,7 +97,7 @@ object Logic {
         val p = prefs(ctx)
         val thr = threshold(ctx)
         val notified = (p.getStringSet("notified", emptySet()) ?: emptySet()).toMutableSet()
-        for (d in days) {
+        for (d in days.take(NOTIFY_DAYS)) {
             if (d.avg >= thr && d.date !in notified) {
                 send(ctx, "☁️ Posible mar de nubes — Puerto del Pico",
                     "${d.date}: probabilidad ${d.avg}/100. Mejor hora ~${d.best.hr}:00. ${d.best.reasons.joinToString(", ")}")

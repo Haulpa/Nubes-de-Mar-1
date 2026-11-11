@@ -19,7 +19,10 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import java.time.LocalDate
 import java.time.LocalTime
+import java.time.format.TextStyle
+import java.util.Locale
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
@@ -213,6 +216,13 @@ class MainActivity : Activity() {
         return c
     }
 
+    private fun dayLabel(i: Int, d: Day): String = when (i) {
+        0 -> "Hoy"
+        1 -> "Mañana"
+        else -> LocalDate.parse(d.date).dayOfWeek.getDisplayName(TextStyle.FULL, Locale("es", "ES"))
+            .replaceFirstChar { it.uppercase() }
+    }
+
     private fun check() {
         status.text = "Consultando…"
         Thread {
@@ -220,7 +230,7 @@ class MainActivity : Activity() {
                 val days = Logic.checkAndNotify(this)
                 runOnUiThread {
                     results.removeAllViews()
-                    days.forEachIndexed { i, d -> results.addView(dayCard(d, if (i == 0) "Hoy" else "Mañana")) }
+                    days.forEachIndexed { i, d -> results.addView(dayCard(d, dayLabel(i, d))) }
                     status.text = if (days.isEmpty()) "Sin datos"
                     else "Última comprobación: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
                 }
