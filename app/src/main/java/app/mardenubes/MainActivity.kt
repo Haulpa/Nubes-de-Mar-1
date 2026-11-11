@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -45,6 +46,11 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var freqLabel: TextView
     private lateinit var thrLabel: TextView
+    private lateinit var placeLabel: TextView
+    private lateinit var subtitle: TextView
+    private lateinit var presetBox: LinearLayout
+    private lateinit var searchInput: EditText
+    private lateinit var searchResults: LinearLayout
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -117,7 +123,36 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(28), dp(16), dp(24))
         }
         root.addView(tv("Mar de nubes", 28f, TEXT, true))
-        root.addView(tv("Puerto del Pico · Valle del Tiétar", 14f, MUTED).apply { layoutParams = lp(16) })
+        subtitle = tv("", 14f, MUTED).apply { layoutParams = lp(16) }
+        root.addView(subtitle)
+
+        // Punto de observación
+        val pc = card()
+        pc.addView(tv("Punto de observación", 13f, MUTED))
+        placeLabel = tv("", 18f, TEXT, true).apply { layoutParams = lp(4) }
+        pc.addView(placeLabel)
+        pc.addView(tv("Elige el valle o pueblo que se ve desde el mirador (por debajo), no la cumbre.", 12f, MUTED).apply { layoutParams = lp(10) })
+        presetBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        pc.addView(presetBox)
+        searchInput = EditText(this).apply {
+            hint = "Buscar pueblo o coordenadas (40.25, -5.20)"
+            setHintTextColor(MUTED)
+            setTextColor(TEXT)
+            textSize = 14f
+            setSingleLine(true)
+            background = rounded(CHIP, 12)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = lp(8).apply { topMargin = dp(10) }
+        }
+        pc.addView(searchInput)
+        pc.addView(button("Buscar", false).apply {
+            layoutParams = lp(8)
+            setOnClickListener { search() }
+        })
+        searchResults = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        pc.addView(searchResults)
+        root.addView(pc)
+        renderPlaces()
 
         // Frecuencia
         val fc = card()
@@ -186,6 +221,58 @@ class MainActivity : Activity() {
 
         setContentView(ScrollView(this).apply { setBackgroundColor(BG); addView(root) })
         check()
+    }
+
+    private fun placeRow(p: Place, sel: Boolean) = TextView(this).apply {
+        text = if (p.detail.isEmpty()) p.name else "${p.name}\n${p.detail}"
+        textSize = 14f
+        setTextColor(if (sel) 0xFFFFFFFF.toInt() else TEXT)
+        background = rounded(if (sel) ACCENT else CHIP, 12)
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        layoutParams = lp(6)
+        setOnClickListener { choose(p) }
+    }
+
+    private fun renderPlaces() {
+        val cur = Logic.current(this)
+        placeLabel.text = cur.name
+        subtitle.text = String.format(Locale.US, "%.3f, %.3f", cur.lat, cur.lon)
+        presetBox.removeAllViews()
+        Logic.PRESETS.forEach { p ->
+            presetBox.addView(placeRow(p, p.name == cur.name && p.lat == cur.lat && p.lon == cur.lon))
+        }
+    }
+
+    private fun choose(p: Place) {
+        Logic.setPlace(this, p)
+        searchResults.removeAllViews()
+        renderPlaces()
+        check()
+    }
+
+    private fun search() {
+        val q = searchInput.text.toString().trim()
+        if (q.isEmpty()) return
+        val m = Regex("""^(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)$""").find(q)
+        if (m != null) {
+            val lat = m.groupValues[1].toDouble()
+            val lon = m.groupValues[2].toDouble()
+            if (lat in -90.0..90.0 && lon in -180.0..180.0) {
+                choose(Place("Punto personalizado", lat, lon, "$lat, $lon"))
+                return
+            }
+        }
+        searchResults.removeAllViews()
+        searchResults.addView(tv("Buscando…", 13f, MUTED))
+        Thread {
+            val res = try { Logic.geocode(q) } catch (e: Exception) { null }
+            runOnUiThread {
+                searchResults.removeAllViews()
+                if (res == null) searchResults.addView(tv("Error de red. Reintenta.", 13f, MUTED))
+                else if (res.isEmpty()) searchResults.addView(tv("Sin resultados.", 13f, MUTED))
+                else res.forEach { searchResults.addView(placeRow(it, false)) }
+            }
+        }.start()
     }
 
     private fun dayCard(d: Day, label: String): LinearLayout {

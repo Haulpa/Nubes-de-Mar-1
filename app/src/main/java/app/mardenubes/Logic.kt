@@ -9,19 +9,20 @@ import android.content.Intent
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.time.LocalDate
 import java.time.ZoneId
 
 data class Hour(val hr: Int, val score: Int, val reasons: List<String>)
+data class Place(val name: String, val lat: Double, val lon: Double, val detail: String = "")
 data class Day(
     val date: String, val avg: Int, val best: Hour, val hours: List<Hour>,
     val models: Int = 1, val spread: Int = 0
 )
 
 object Logic {
-    // Valle del Tiétar (Arenas de San Pedro), de cara al Puerto del Pico
-    private const val BASE = "https://api.open-meteo.com/v1/forecast?latitude=40.21&longitude=-5.08" +
-        "&forecast_days=7&timezone=Europe%2FMadrid"
+    private fun base(lat: Double, lon: Double) =
+        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&forecast_days=7&timezone=Europe%2FMadrid"
     private const val VARS = "temperature_2m,dew_point_2m,wind_speed_10m,cloud_cover_low,cloud_cover_mid,cloud_cover_high,temperature_850hPa"
 
     // Modelos independientes: ECMWF (europeo), ICON (alemán), GFS (EE. UU.), Météo-France
@@ -96,22 +97,58 @@ object Logic {
         return Day(date, avg, hours.maxByOrNull { it.score }!!, hours, n, spread)
     }
 
-    fun fetch(): List<Day> {
+    fun fetch(lat: Double, lon: Double): List<Day> {
         val today = LocalDate.now(ZoneId.of("Europe/Madrid"))
         val dates = (0..6).map { today.plusDays(it.toLong()).toString() }
         val perModels = mutableListOf<Map<String, List<Hour>>>()
         try {
-            val h = get("$BASE&hourly=$VARS&models=${MODELS.joinToString(",")}").getJSONObject("hourly")
+            val h = get("${base(lat, lon)}&hourly=$VARS&models=${MODELS.joinToString(",")}").getJSONObject("hourly")
             for (m in MODELS) perModel(h, "_$m", dates)?.let { if (it.isNotEmpty()) perModels += it }
         } catch (e: Exception) { /* se prueba con el modelo por defecto */ }
         if (perModels.isEmpty()) {
-            val h = get("$BASE&hourly=$VARS").getJSONObject("hourly")
+            val h = get("${base(lat, lon)}&hourly=$VARS").getJSONObject("hourly")
             perModel(h, "", dates)?.let { if (it.isNotEmpty()) perModels += it }
         }
         if (perModels.isEmpty()) throw Exception("sin datos")
         return dates.mapNotNull { d ->
             val ms = perModels.mapNotNull { it[d] }.filter { it.isNotEmpty() }
             if (ms.isEmpty()) null else combine(d, ms)
+        }
+    }
+
+    // Puntos predefinidos: el valle/pueblo que se ve desde abajo del mirador (coordenadas aproximadas)
+    val PRESETS = listOf(
+        Place("Puerto del Pico · valle del Tiétar", 40.21, -5.08, "Arenas de San Pedro"),
+        Place("Galayos / Guisando · Tiétar oeste", 40.20, -5.15, "Guisando (aprox.)"),
+        Place("Candeleda · Tiétar oeste", 40.15, -5.24, "Candeleda (aprox.)"),
+        Place("Valle del Alberche · norte de Gredos", 40.36, -5.52, "El Barco de Ávila (aprox.)"),
+        Place("Valle Amblés · Ávila", 40.66, -4.70, "Ávila")
+    )
+
+    fun current(ctx: Context): Place {
+        val p = prefs(ctx)
+        val d = PRESETS[0]
+        return Place(
+            p.getString("pname", d.name) ?: d.name,
+            p.getString("plat", null)?.toDoubleOrNull() ?: d.lat,
+            p.getString("plon", null)?.toDoubleOrNull() ?: d.lon
+        )
+    }
+
+    fun setPlace(ctx: Context, pl: Place) {
+        prefs(ctx).edit().putString("pname", pl.name).putString("plat", pl.lat.toString())
+            .putString("plon", pl.lon.toString()).putStringSet("notified", emptySet()).apply()
+    }
+
+    /** Busca pueblos por nombre con el geocodificador gratuito de Open-Meteo. */
+    fun geocode(q: String): List<Place> {
+        val url = "https://geocoding-api.open-meteo.com/v1/search?name=${URLEncoder.encode(q, "UTF-8")}&count=6&language=es&format=json"
+        val arr = get(url).optJSONArray("results") ?: return emptyList()
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            var detail = listOf(o.optString("admin2"), o.optString("admin1")).filter { x -> x.isNotBlank() }.joinToString(", ")
+            if (o.has("elevation")) detail += " · ${o.optDouble("elevation").toInt()} m"
+            Place(o.getString("name"), o.getDouble("latitude"), o.getDouble("longitude"), detail)
         }
     }
 
@@ -135,13 +172,14 @@ object Logic {
 
     /** Consulta el tiempo y avisa (una vez por día) si se supera el umbral. */
     fun checkAndNotify(ctx: Context): List<Day> {
-        val days = fetch()
+        val place = current(ctx)
+        val days = fetch(place.lat, place.lon)
         val p = prefs(ctx)
         val thr = threshold(ctx)
         val notified = (p.getStringSet("notified", emptySet()) ?: emptySet()).toMutableSet()
         for (d in days.take(NOTIFY_DAYS)) {
             if (d.avg >= thr && d.date !in notified) {
-                send(ctx, "☁️ Posible mar de nubes — Puerto del Pico",
+                send(ctx, "☁️ Posible mar de nubes — ${place.name}",
                     "${d.date}: probabilidad ${d.avg}/100 (${d.models} modelos, diferencia ${d.spread}). " +
                         "Mejor hora ~${d.best.hr}:00. ${d.best.reasons.joinToString(", ")}")
                 notified += d.date
